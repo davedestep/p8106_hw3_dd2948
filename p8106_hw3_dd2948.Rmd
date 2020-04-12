@@ -1,0 +1,214 @@
+---
+title: "p8106_hw3_dd2948"
+author: "David DeStephano"
+date: "April 12, 2020"
+output:
+  pdf_document: default
+  github_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE, warning=FALSE}
+library(ISLR)
+library(caret)
+library(glmnet)
+library(MASS)
+library(e1071)
+library(mlbench)
+library(pROC)
+library(AppliedPredictiveModeling)
+library(tidyverse)
+```
+
+```{r}
+data(Weekly)
+Weekly<-Weekly %>% select(-Today)
+dat <- Weekly
+theme1 <- transparentTheme(trans = .4)
+theme1$strip.background$col <- rgb(.0, .6, .2, .2)
+trellis.par.set(theme1)
+
+featurePlot(x = dat[, 1:7],
+            y = dat$Direction,
+            scales = list(x=list(relation="free"),
+                          y=list(relation="free")),
+            plot = "density", pch = "|",
+            auto.key = list(columns = 2))
+
+```
+
+#Logistic regression
+```{r}
+set.seed(1)
+
+dat<-Weekly %>% select(-Year)
+
+glm.fit <- glm(Direction~.,
+               data = dat,
+               family = binomial)
+
+summary(glm.fit)
+
+contrasts(dat$Direction)
+```
+
+Lag2 is the only significant variable
+
+
+```{r}
+set.seed(1)
+test.pred.prob <- predict(glm.fit, type = "response")
+
+test.pred <- rep("Down", length(test.pred.prob))
+test.pred[test.pred.prob>0.5] <- "Up"
+
+confusionMatrix(data = as.factor(test.pred),
+                reference = dat$Direction,
+                positive = "Up")
+
+```
+
+The confusion matrix tells us that the sensitivity is 92% and specificity is very low at 11%. Only 56 percent of predictions are correctly classified
+
+Sensitivity measures the proportions of true positives that were predicted correctly
+
+Specificity is the proportion of true negatives that were predicted correctly as negative
+
+Kappa is only .035, which is very far from 1. A value of one would indicate good model performance.
+
+
+
+
+##ROC curve
+```{r}
+roc.glm <-roc(dat$Direction,
+              test.pred.prob)
+
+plot(roc.glm, legacy.axes = TRUE, print.auc =TRUE)
+
+
+roc_glm = roc(dat$Direction, test.pred.prob)
+
+plot(roc_glm, legacy.axes = TRUE, print.auc = TRUE)
+plot(smooth(roc_glm), col = 4, add = TRUE)
+```
+
+
+The AUC is only 0.554, not much better than a flip of a coin
+
+
+
+#Redo analysis with 1990-2008 as training data
+```{r}
+dat <- Weekly %>% select(-Lag3, -Lag4, -Lag5, -Volume)
+
+train<- dat %>% filter(Year<=2008)
+test<- dat %>% filter(Year>=2009)
+
+#Regression model on 1990-2008
+glm.fit <- glm(Direction~Lag1 + Lag2,
+               data = train,
+               family = binomial)
+
+
+test.pred.prob <- predict(glm.fit, newdata = test,
+                          type = "response")
+test.pred <- rep("Down", length(test.pred.prob))
+test.pred[test.pred.prob>0.5] <- "Up"
+
+roc.glm2 <-roc(test$Direction,
+              test.pred.prob)
+
+plot(roc.glm2, legacy.axes = TRUE, print.auc =TRUE)
+
+```
+
+The AUC is still low at 0.556
+
+#LDA
+```{r}
+lda.fit <- lda(Direction~Lag1 + Lag2,
+               data = train)
+
+test.pred.prob <- predict(lda.fit, newdata = test,
+                          type = "response")
+
+
+roc.lda <-roc(test$Direction,
+              test.pred.prob$posterior[,2],
+              levels = c("Down", "Up"))
+
+plot(roc.lda, legacy.axes = TRUE, print.auc =TRUE)
+
+```
+
+#QDA
+```{r}
+set.seed(1)
+qda.fit <- qda(Direction~Lag1 + Lag2,
+               data = train)
+
+test.pred.prob <- predict(qda.fit, newdata = test,
+                          type = "response")
+
+
+roc.qda <-roc(test$Direction,
+              test.pred.prob$posterior[,2],
+              levels = c("Down", "Up"))
+
+
+plot(roc.qda, legacy.axes = TRUE, print.auc =TRUE)
+
+```
+
+#Knn
+
+```{r}
+ctrl <- trainControl(method = "repeatedcv",
+                     repeats = 5,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+
+
+set.seed(1)
+model.knn <- train(x = train[2:3],
+                   y = train$Direction,
+                   method = "knn",
+                   preProcess = c("center","scale"),
+                   tuneGrid = data.frame(k =seq(1,200,by=5)),
+                   trControl = ctrl)
+
+ggplot(model.knn)
+
+
+test.pred.prob <- predict(model.knn, newdata = test,
+                          type = "prob")
+
+roc.knn <-roc(test$Direction,
+              test.pred.prob$Up,
+              levels = c("Down", "Up"))
+
+
+plot(roc.knn, legacy.axes = TRUE, print.auc =TRUE)
+
+
+
+
+```
+
+The AUC for knn when predicting 2009 onwards is 0.56 for "Up". LDA, GLM, and KNN modles perform equally at 0.56, but no model predicts the data well, as they are all close to 0.5.
+
+##Plot the comparisons
+
+```{r}
+plot(roc.glm2, legacy.axes = TRUE)
+plot(roc.lda, col = 3, add = TRUE)
+plot(roc.qda, col = 4, add = TRUE)
+plot(roc.knn, col = 6, add = TRUE)
+modelNames <-c("glm","lda","qda","knn")
+
+```
+
